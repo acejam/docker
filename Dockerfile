@@ -1,56 +1,89 @@
-FROM java:8-jdk
+FROM ubuntu:14.04
+MAINTAINER Joshua Noble "acejam@gmail.com"
 
-RUN apt-get update && apt-get install -y wget git curl zip && rm -rf /var/lib/apt/lists/*
+#JENKINS & SYSTEM PACKAGES
+RUN apt-get install -q -y wget curl && wget -q -O - https://jenkins-ci.org/debian/jenkins-ci.org.key | sudo apt-key add -
+RUN echo deb http://pkg.jenkins-ci.org/debian binary/ > /etc/apt/sources.list.d/jenkins.list
+RUN curl -sL https://deb.nodesource.com/setup_4.x | sudo -E bash -
+RUN apt-get update -q -y && apt-get clean && apt-get upgrade -q -y
+RUN apt-get install -q -y openjdk-7-jre-headless git curl build-essential libssl-dev nodejs jenkins openssh-server && apt-get clean
 
-ENV JENKINS_HOME /var/jenkins_home
-ENV JENKINS_SLAVE_AGENT_PORT 50000
+# VOLUME ["/home/jenkins/.jenkins"]
 
-# Jenkins is run with user `jenkins`, uid = 1000
-# If you bind mount a volume from the host or a data container, 
-# ensure you use the same uid
-RUN useradd -d "$JENKINS_HOME" -u 1000 -m -s /bin/bash jenkins
+# ADD run /usr/local/bin/run
 
-# Jenkins home directory is a volume, so configuration and build history 
-# can be persisted and survive image upgrades
-VOLUME /var/jenkins_home
+#ESSENTIALS
+# RUN apt-get install -y build-essential curl git-core vim sudo
 
-# `/usr/share/jenkins/ref/` contains all reference configuration we want 
-# to set on a fresh new installation. Use it to bundle additional plugins 
-# or config file with your custom jenkins Docker image.
-RUN mkdir -p /usr/share/jenkins/ref/init.groovy.d
+#RUBY & RVM
+RUN apt-get install -q -y libyaml-dev libreadline-dev libgdbm-dev libffi-dev libncurses-dev bison libxslt-dev libxml2-dev
 
-ENV TINI_SHA 066ad710107dc7ee05d3aa6e4974f01dc98f3888
+RUN su jenkins -c "/bin/bash -l -c 'gpg --keyserver hkp://keys.gnupg.net --recv-keys 409B6B1796C275462A1703113804BB82D39DC0E3'"
+RUN su jenkins -c "/bin/bash -l -c 'curl -sSL https://get.rvm.io | bash -s stable'"
+RUN su jenkins -c "/bin/bash -l -c 'rvm autolibs 0'"
+RUN su jenkins -c "/bin/bash -l -c 'rvm requirements'"
+RUN su jenkins -c "/bin/bash -l -c 'rvm install 2.2.4'"
+#NOKOGIRI prerequisites
+# RUN DEBCONF_TERSE='yes' DEBIAN_PRIORITY='critical' DEBIAN_FRONTEND=noninteractive apt-get -qq -y -u --force-yes install libxslt-dev libxml2-dev
 
-# Use tini as subreaper in Docker container to adopt zombie processes 
-RUN curl -fL https://github.com/krallin/tini/releases/download/v0.5.0/tini-static -o /bin/tini && chmod +x /bin/tini \
-  && echo "$TINI_SHA /bin/tini" | sha1sum -c -
+#MYSQL server prerequisite
+# Hack for initctl not being available in Ubuntu
+# RUN dpkg-divert --local --rename --add /sbin/initctl
+# RUN ln -s /bin/true /sbin/initctl
 
-COPY init.groovy /usr/share/jenkins/ref/init.groovy.d/tcp-slave-agent-port.groovy
+# EXPOSE 3306
+# RUN DEBCONF_TERSE='yes' DEBIAN_PRIORITY='critical' DEBIAN_FRONTEND=noninteractive apt-get -qq -y -u --force-yes install mysql-server libmysql-ruby
 
-ENV JENKINS_VERSION 1.625.2
-ENV JENKINS_SHA 395fe6975cf75d93d9fafdafe96d9aab1996233b
+# Listen on all interfaces
+# RUN sed -i -e 's/127.0.0.1/0.0.0.0/' /etc/mysql/my.cnf
+# Allow root from non localhost IPs
+# RUN /usr/sbin/mysqld & sleep 10s && mysql --host=127.0.0.1 --user=root -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%'; FLUSH PRIVILEGES;"
 
+#MYSQL client prerequisite
+# RUN DEBCONF_TERSE='yes' DEBIAN_PRIORITY='critical' DEBIAN_FRONTEND=noninteractive apt-get -qq -y -u --force-yes install libmysqlclient-dev
 
-# could use ADD but this one does not check Last-Modified header 
-# see https://github.com/docker/docker/issues/8331
-RUN curl -fL http://mirrors.jenkins-ci.org/war-stable/$JENKINS_VERSION/jenkins.war -o /usr/share/jenkins/jenkins.war \
-  && echo "$JENKINS_SHA /usr/share/jenkins/jenkins.war" | sha1sum -c -
+#MEMCACHE
+# RUN apt-get install memcached -y
 
-ENV JENKINS_UC https://updates.jenkins-ci.org
-RUN chown -R jenkins "$JENKINS_HOME" /usr/share/jenkins/ref
+#REDIS
+# RUN apt-get install redis-server -y
 
-# for main web interface:
+#RIAK
+# RUN DEBCONF_TERSE='yes' DEBIAN_PRIORITY='critical' DEBIAN_FRONTEND=noninteractive apt-get -qq -y -u --force-yes install libssl0.9.8 logrotate wget
+# RUN wget http://s3.amazonaws.com/downloads.basho.com/riak/1.2/1.2.1/debian/6/riak_1.2.1-1_amd64.deb
+# RUN dpkg -i riak_1.2.1-1_amd64.deb
+
+#MONGO DB
+# RUN apt-get install mongodb -y
+
+#FIREFOX and X-SERVER
+#RUN apt-get install firefox x-window-system gnome-core xvfb -y
+
+#Copy SSH Key
+# RUN apt-get update
+# RUN apt-get install -y sudo openssh-server
+# RUN ssh-keygen -t rsa -C "your_email@example.com"; ls -la
+# ADD .ssh-keys /home/jenkins/.ssh
+# ADD .ssh-keys /root/.ssh
+# RUN ssh-keyscan github.com | tee /root/.ssh/known_hosts >> /home/jenkins/.ssh/known_hosts
+# RUN echo 'ssh -T git@github.com'
+
+#Pull Jenkins templates
+# RUN apt-get install -y git-core
+# RUN git init
+# RUN git config user.name 'viralheat-ci'
+# RUN git config user.email 'engineering@viralheat.com'
+#
+# RUN git clone git@github.com:viralheat/jenkins-image.git /home/jenkins/jenkins-image
+# RUN cp /home/jenkins/jenkins-image/*.xml /home/jenkins/.jenkins/
+# RUN cp -R /home/jenkins/jenkins-image/plugins /home/jenkins/.jenkins/
+# RUN cp -R /home/jenkins/jenkins-image/jobs /home/jenkins/.jenkins/
+# RUN cp -R /home/jenkins/jenkins-image/updates /home/jenkins/.jenkins/
+
+# RUN chown -R jenkins /home/jenkins/.jenkins
+
+# EXPOSE
 EXPOSE 8080
+EXPOSE 22
 
-# will be used by attached slave agents:
-EXPOSE 50000
-
-ENV COPY_REFERENCE_FILE_LOG $JENKINS_HOME/copy_reference_file.log
-
-USER jenkins
-
-COPY jenkins.sh /usr/local/bin/jenkins.sh
-ENTRYPOINT ["/bin/tini", "--", "/usr/local/bin/jenkins.sh"]
-
-# from a derived Dockerfile, can use `RUN plugins.sh active.txt` to setup /usr/share/jenkins/ref/plugins from a support bundle
-COPY plugins.sh /usr/local/bin/plugins.sh
+# CMD /usr/local/bin/run
